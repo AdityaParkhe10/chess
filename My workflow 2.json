@@ -1,0 +1,240 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chess-moves",
+        "responseMode": "streaming",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1712,
+        -480
+      ],
+      "id": "9f06be08-1713-4600-9cd8-12911d81436f",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fenCode = $input.first().json.body.currentFen;\n\n// Return only the FEN code\nreturn [{\n  json: {\n    fen: fenCode\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        -480
+      ],
+      "id": "ef7ff902-2ecc-40b2-9653-f78aa51fefa5",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const fen = item.json.fen || ''; // Fallback to empty string if missing\n  \n  const safeFen = fen\n    .replace(/\\//g, '/')  // Keep slashes\n    .replace(/ /g, '%20'); // Encode spaces\n  \n  return {\n    json: {\n      originalFen: fen,\n      stockfishUrl: fen \n        ? `https://stockfish.online/api/s/v2.php?fen=${safeFen}&depth=13`\n        : null\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        -480
+      ],
+      "id": "0a0b4dfc-6194-4697-9410-cfdd81517aae",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "url": "={{$node[\"Code\"].json[\"stockfishUrl\"]}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1440,
+        -256
+      ],
+      "id": "8a47fa12-880e-4d6f-a6a8-547e90ab69be",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode":  "// Get inputs from previous node\nconst initialFEN = $input.first().json.fen;\nconst moveUCI =$input.first().json.bestmove;\n\nfunction applyMoveToFEN(initialFEN, moveUCI) {\n    function expandFenRow(fenRow) {\n        let row = [];\n        for (let i = 0; i < fenRow.length; i++) {\n            let char = fenRow[i];\n            if (char >= '1' && char <= '8') {\n                let count = parseInt(char);\n                for (let j = 0; j < count; j++) {\n                    row.push('');\n                }\n            } else {\n                row.push(char);\n            }\n        }\n        return row;\n    }\n\n    function compressRow(row) {\n        let result = '';\n        let emptyCount = 0;\n        for (let i = 0; i < row.length; i++) {\n            if (row[i] === '') {\n                emptyCount++;\n            } else {\n                if (emptyCount > 0) {\n                    result += emptyCount;\n                    emptyCount = 0;\n                }\n                result += row[i];\n            }\n        }\n        if (emptyCount > 0) {\n            result += emptyCount;\n        }\n        return result;\n    }\n\n    function removeChar(str, char) {\n        let newStr = '';\n        for (let i = 0; i < str.length; i++) {\n            if (str[i] !== char) {\n                newStr += str[i];\n            }\n        }\n        return newStr;\n    }\n\n    function squareToAlgebraic(row, col) {\n        let file = String.fromCharCode(97 + col);\n        let rank = 8 - row;\n        return file + rank;\n    }\n\n    let parts = initialFEN.split(' ');\n    if (parts.length < 6) {\n        throw new Error(\"Invalid FEN\");\n    }\n    let boardFEN = parts[0];\n    let activeColor = parts[1];\n    let castling = parts[2];\n    let enPassant = parts[3];\n    let halfmoveClock = parseInt(parts[4]);\n    let fullmoveNumber = parseInt(parts[5]);\n\n    let fenRows = boardFEN.split('/');\n    let board = [];\n    for (let i = 0; i < 8; i++) {\n        board.push(expandFenRow(fenRows[i]));\n    }\n\n    let startFile = moveUCI[0];\n    let startRank = moveUCI[1];\n    let endFile = moveUCI[2];\n    let endRank = moveUCI[3];\n    let promotion = moveUCI.length > 4 ? moveUCI[4] : null;\n\n    let startCol = startFile.charCodeAt(0) - 97;\n    let startRow = 8 - parseInt(startRank);\n    let endCol = endFile.charCodeAt(0) - 97;\n    let endRow = 8 - parseInt(endRank);\n\n    if (startRow < 0 || startRow > 7 || startCol < 0 || startCol > 7 || \n        endRow < 0 || endRow > 7 || endCol < 0 || endCol > 7) {\n        throw new Error(\"Invalid move: square out of board\");\n    }\n\n    let piece = board[startRow][startCol];\n    if (piece === '') {\n        throw new Error(\"No piece at starting square\");\n    }\n\n    let capturedPiece = board[endRow][endCol];\n    let isEnPassant = false;\n    let isCastling = false;\n\n    if (piece.toLowerCase() === 'p' && enPassant !== '-') {\n        let epCol = enPassant[0].charCodeAt(0) - 97;\n        let epRow = 8 - parseInt(enPassant[1]);\n        if (endRow === epRow && endCol === epCol) {\n            isEnPassant = true;\n            capturedPiece = board[startRow][endCol];\n            board[startRow][endCol] = '';\n        }\n    }\n\n    board[startRow][startCol] = '';\n\n    if (piece.toLowerCase() === 'k' && Math.abs(startCol - endCol) === 2) {\n        isCastling = true;\n        let rookStartCol, rookEndCol;\n        if (endCol > startCol) {\n            rookStartCol = 7;\n            rookEndCol = endCol - 1;\n        } else {\n            rookStartCol = 0;\n            rookEndCol = endCol + 1;\n        }\n        let rookPiece = board[startRow][rookStartCol];\n        board[startRow][rookStartCol] = '';\n        board[startRow][rookEndCol] = rookPiece;\n    }\n\n    if (promotion) {\n        let promotedPiece = (activeColor === 'w') ? promotion.toUpperCase() : promotion.toLowerCase();\n        board[endRow][endCol] = promotedPiece;\n    } else {\n        board[endRow][endCol] = piece;\n    }\n\n    let newCastling = castling;\n    if (piece === 'K') {\n        newCastling = removeChar(newCastling, 'K');\n        newCastling = removeChar(newCastling, 'Q');\n    } else if (piece === 'k') {\n        newCastling = removeChar(newCastling, 'k');\n        newCastling = removeChar(newCastling, 'q');\n    } else if (piece === 'R') {\n        if (startRow === 7 && startCol === 0) {\n            newCastling = removeChar(newCastling, 'Q');\n        } else if (startRow === 7 && startCol === 7) {\n            newCastling = removeChar(newCastling, 'K');\n        }\n    } else if (piece === 'r') {\n        if (startRow === 0 && startCol === 0) {\n            newCastling = removeChar(newCastling, 'q');\n        } else if (startRow === 0 && startCol === 7) {\n            newCastling = removeChar(newCastling, 'k');\n        }\n    }\n\n    if (capturedPiece && capturedPiece.toLowerCase() === 'r') {\n        if (endRow === 7 && endCol === 0) {\n            newCastling = removeChar(newCastling, 'Q');\n        } else if (endRow === 7 && endCol === 7) {\n            newCastling = removeChar(newCastling, 'K');\n        } else if (endRow === 0 && endCol === 0) {\n            newCastling = removeChar(newCastling, 'q');\n        } else if (endRow === 0 && endCol === 7) {\n            newCastling = removeChar(newCastling, 'k');\n        }\n    }\n\n    if (newCastling === '') {\n        newCastling = '-';\n    }\n\n    let newEnPassant = '-';\n    if (piece === 'P' && startRow === 6 && endRow === 4) {\n        newEnPassant = squareToAlgebraic(5, startCol);\n    } else if (piece === 'p' && startRow === 1 && endRow === 3) {\n        newEnPassant = squareToAlgebraic(2, startCol);\n    }\n\n    let newHalfmove;\n    if (piece.toLowerCase() === 'p' || capturedPiece) {\n        newHalfmove = 0;\n    } else {\n        newHalfmove = halfmoveClock + 1;\n    }\n\n    let newActiveColor = activeColor === 'w' ? 'b' : 'w';\n    let newFullmove = fullmoveNumber;\n    if (activeColor === 'b') {\n        newFullmove++;\n    }\n\n    let newBoardFEN = [];\n    for (let i = 0; i < 8; i++) {\n        newBoardFEN.push(compressRow(board[i]));\n    }\n    newBoardFEN = newBoardFEN.join('/');\n\n    return [newBoardFEN, newActiveColor, newCastling, newEnPassant, newHalfmove, newFullmove].join(' ');\n}\n\n// Run with input checks\ntry {\n    if (!initialFEN || !moveUCI) {\n        throw new Error(\"Missing originalFen or bestmove in input\");\n    }\n\n    const newFEN = applyMoveToFEN(initialFEN, moveUCI);\n    return [{ json: { newFen: newFEN.replace(/ /g, \"%20\") } }];\n} catch (error) {\n    return [{ json: { error: error.message } }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1232,
+        -256
+      ],
+      "id": "da4536cd-620b-4053-879e-7db8119faafb",
+      "name": "Code2",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "=https://fen2image.chessvision.ai/{{ $json.newFen }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        -592
+      ],
+      "id": "189d64ef-f3e2-4790-93a2-b3ef90f4783e",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get inputs from previous node\nconst initialFEN = $input.first().json.fen;\nconst moveUCI =$input.first().json.bestmove;\n\nfunction applyMoveToFEN(initialFEN, moveUCI) {\n    // ... (code remains unchanged) ...\n}\n\n// Run with input checks\ntry {\n    if (!initialFEN || !moveUCI) {\n        throw new Error(\"Missing originalFen or bestmove in input\");\n    }\n\n    const newFEN = applyMoveToFEN(initialFEN, moveUCI);\n    return [{ json: { newFen: newFEN.replace(/ /g, \"%20\") } }];\n} catch (error) {\n    return [{ json: { error: error.message } }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        -592
+      ],
+      "id": "c9164d5b-626a-4bee-992f-b0686971b6c8",
+      "name": "Code3",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1120,
+        -592
+      ],
+      "id": "00823e10-df12-4df3-bb6f-e4aa54c6ca30",
+      "name": "Merge",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "binaryData": true,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -528,
+        -480
+      ],
+      "id": "456c7cf1-76bc-46bb-af08-b4ba0354d672",
+      "name": "Send a photo message",
+      "credentials": {
+        "telegramApi": "TELEGRAM_CREDENTIALS"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code3": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Send a photo message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
