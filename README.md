@@ -3,7 +3,7 @@
 Get an instant best-move preview for your ongoing Lichess games. This project polls your Lichess account, sends the current FEN to an n8n workflow, fetches a Stockfish move, applies that move to the FEN, renders a board image of the resulting position, and delivers it to you on Telegram.
 
 <p align="center"> 
-  <img src="docs/workflow.png" alt="n8n workflow screenshot" width="720"> 
+  <img src="workflow.png" alt="n8n workflow screenshot" width="720"> 
 </p>
 
 ## How it works
